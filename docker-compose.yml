@@ -1,0 +1,198 @@
+services:
+  demo-app:
+    build:
+      context: ./demo-app
+      dockerfile: Dockerfile
+    container_name: observex-demo-app
+    restart: unless-stopped
+    ports:
+      - "${DEMO_APP_PORT:-5000}:5000"
+    environment:
+      - OTEL_SERVICE_NAME=demo-flask-app
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318/v1/traces
+      - LOG_DIR=/var/log/app
+    volumes:
+      - app_logs:/var/log/app
+    depends_on:
+      jaeger:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    container_name: observex-prometheus
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "--web.enable-lifecycle"
+      - "--web.enable-remote-write-receiver"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_rules:/etc/prometheus/rules
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: observex-alertmanager
+    restart: unless-stopped
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    volumes:
+      - ./infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:9093/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: observex-loki
+    restart: unless-stopped
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    command: -config.file=/etc/loki/config.yml
+    volumes:
+      - ./infra/loki/config.yml:/etc/loki/config.yml:ro
+      - loki_data:/tmp/loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 -O- http://localhost:3100/ready | grep -q 'ready' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: observex-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./infra/promtail/config.yml:/etc/promtail/config.yml:ro
+      - app_logs:/var/log/app:ro
+    depends_on:
+      loki:
+        condition: service_healthy
+      demo-app:
+        condition: service_started
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.57.0
+    container_name: observex-jaeger
+    restart: unless-stopped
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "${JAEGER_OTLP_GRPC_PORT:-4317}:4317"
+      - "${JAEGER_OTLP_HTTP_PORT:-4318}:4318"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:16686/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: observex-grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    container_name: observex-node-exporter
+    restart: unless-stopped
+    ports:
+      - "${NODE_EXPORTER_PORT:-9100}:9100"
+
+  observex-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: observex-api
+    restart: unless-stopped
+    ports:
+      - "${OBSERVEX_API_PORT:-8000}:8000"
+    environment:
+      - PROMETHEUS_URL=${PROMETHEUS_URL:-http://prometheus:9090}
+      - LOKI_URL=${LOKI_URL:-http://loki:3100}
+      - JAEGER_URL=${JAEGER_URL:-http://jaeger:16686}
+      - ALERTMANAGER_URL=${ALERTMANAGER_URL:-http://alertmanager:9093}
+      - DEMO_APP_URL=${DEMO_APP_URL:-http://demo-app:5000}
+      - SQLITE_DB_PATH=/app/data/observex.db
+      - PROMETHEUS_RULES_PATH=/etc/prometheus/rules/observex.yml
+    volumes:
+      - observex_data:/app/data
+      - prometheus_rules:/etc/prometheus/rules
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+      alertmanager:
+        condition: service_healthy
+      demo-app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  observex-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: observex-frontend
+    restart: unless-stopped
+    ports:
+      - "${OBSERVEX_FRONTEND_PORT:-8080}:8080"
+    depends_on:
+      observex-api:
+        condition: service_healthy
+
+volumes:
+  app_logs:
+  prometheus_data:
+  prometheus_rules:
+  alertmanager_data:
+  loki_data:
+  grafana_data:
+  observex_data:

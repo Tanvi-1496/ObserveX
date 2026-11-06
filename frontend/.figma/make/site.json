@@ -1,0 +1,10 @@
+{
+  "description": "A unified observability console for DevOps and SRE teams to monitor metrics, logs, traces, alerts, and incidents, and quickly pinpoint root causes.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

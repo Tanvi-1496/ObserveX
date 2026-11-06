@@ -1,0 +1,52 @@
+groups:
+  - name: observex_alerts
+    rules:
+      - alert: ServiceDown
+        expr: up{job="demo-app"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          endpoint: "/"
+        annotations:
+          summary: "Demo App is down"
+          description: "demo-flask-app has been unreachable for more than 30s."
+
+      - alert: HighErrorRate
+        expr: (sum(rate(http_requests_total{job="demo-app",status=~"5.."}[1m])) / clamp_min(sum(rate(http_requests_total{job="demo-app"}[1m])), 0.001)) * 100 > 5
+        for: 30s
+        labels:
+          severity: critical
+          endpoint: "/error"
+        annotations:
+          summary: "High error rate on demo-app"
+          description: "Error rate has exceeded 5% for the last 30 seconds."
+
+      - alert: HighP95Latency
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="demo-app"}[1m])) by (le)) > 1.5
+        for: 30s
+        labels:
+          severity: warning
+          endpoint: "/slow"
+        annotations:
+          summary: "High p95 latency on demo-app"
+          description: "p95 latency is above 1.5 seconds for the last 30 seconds."
+
+      - alert: HighCPUUsage
+        expr: (rate(process_cpu_seconds_total{job="demo-app"}[1m]) * 100) > 90
+        for: 30s
+        labels:
+          severity: warning
+          endpoint: "/"
+        annotations:
+          summary: "High CPU usage on demo-app"
+          description: "demo-app CPU usage is above 90%."
+
+      - alert: ContainerRestarting
+        expr: increase(process_start_time_seconds{job="demo-app"}[5m]) > 2
+        for: 1m
+        labels:
+          severity: warning
+          endpoint: "/"
+        annotations:
+          summary: "Container restarting"
+          description: "demo-app container restarted multiple times."
