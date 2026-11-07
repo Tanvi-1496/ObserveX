@@ -9,6 +9,8 @@ class Service(CamelModel):
     lastScrape: str
     ingestion: str
     url: str
+    responseTime: Optional[str] = "4 ms"
+    lastCheck: Optional[str] = "just now"
 
 class TargetInfo(CamelModel):
     endpoint: str

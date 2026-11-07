@@ -15,6 +15,15 @@ export interface MetricPoint {
   memory: number
 }
 
+export interface EndpointMetricSummary {
+  method: string
+  endpoint: string
+  requests: string
+  avgLatency: string
+  p95Latency: string
+  errorRate: string
+}
+
 export interface LogEntry {
   id: string
   timestamp: string
@@ -99,6 +108,16 @@ export interface Service {
   lastScrape: string
   ingestion: string
   url: string
+  responseTime?: string
+  lastCheck?: string
+}
+
+export interface TargetInfo {
+  endpoint: string
+  state: 'Up' | 'Down'
+  lastScrape: string
+  duration: string
+  error: string
 }
 
 export interface LoadTestConfig {
@@ -109,4 +128,33 @@ export interface LoadTestConfig {
   latency: number
   errorRate: number
   cpuSpike: boolean
+}
+
+export interface GeneralSettings {
+  workspaceName: string
+  defaultEnvironment: string
+  defaultTimeRange: string
+}
+
+export interface NotificationSettings {
+  incidentUpdates: boolean
+  alertDigests: boolean
+  weeklySloReport: boolean
+}
+
+export interface TeamMember {
+  id: string
+  name: string
+  email: string
+  role: 'Admin' | 'Editor' | 'Viewer'
+  status: 'Active' | 'Invited'
+  createdAt: string
+}
+
+export interface ApiKey {
+  id: string
+  name: string
+  maskedKey: string
+  createdAt: string
+  lastUsed?: string | null
 }

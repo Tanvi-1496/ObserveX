@@ -8,7 +8,7 @@ from typing import Optional, List, Dict, Any
 import httpx
 
 from app.config import settings
-from app.db import AsyncSessionLocal
+import app.db
 from app.models.loadtest import LoadTestRunModel
 from app.schemas.loadtest import LoadTestConfig, LoadTestStatus, LoadTestRunRecord
 
@@ -20,7 +20,7 @@ class LoadTestManager:
         self.config: Optional[LoadTestConfig] = None
         self.start_time: float = 0.0
         self.requests_sent: int = 0
-        self.current_rps: float = 0.0
+        self.recent_timestamps: List[float] = []
         self.latencies: List[float] = []
         self.error_count: int = 0
         self.progress: float = 0.0
@@ -38,17 +38,27 @@ class LoadTestManager:
                     currentErrors=0.0
                 )
 
-            elapsed = time.time() - self.start_time
+            now = time.time()
+            elapsed = now - self.start_time
             progress = min(100.0, (elapsed / max(1, self.config.duration)) * 100.0)
-            avg_lat = sum(self.latencies[-50:]) / max(1, len(self.latencies[-50:])) if self.latencies else 0.0
-            err_pct = (self.error_count / max(1, self.requests_sent)) * 100.0 if self.requests_sent > 0 else 0.0
+
+            # Rolling 2-second window for actual measured RPS
+            self.recent_timestamps = [t for t in self.recent_timestamps if now - t <= 2.0]
+            measured_rps = len(self.recent_timestamps) / 2.0 if self.recent_timestamps else 0.0
+
+            # Rolling 30 requests for current latency
+            recent_lats = self.latencies[-30:] if self.latencies else []
+            avg_lat = sum(recent_lats) / max(1, len(recent_lats)) if recent_lats else float(self.config.latency)
+
+            # Overall error percentage
+            err_pct = (self.error_count / max(1, self.requests_sent)) * 100.0 if self.requests_sent > 0 else float(self.config.errorRate)
 
             return LoadTestStatus(
                 running=True,
                 progress=round(progress, 1),
                 config=self.config,
                 requestsSent=self.requests_sent,
-                currentRps=round(self.current_rps, 1),
+                currentRps=round(max(measured_rps, float(self.config.rps if elapsed < 1.0 else measured_rps)), 1),
                 currentLatency=round(avg_lat, 1),
                 currentErrors=round(err_pct, 1)
             )
@@ -56,13 +66,13 @@ class LoadTestManager:
     async def start(self, config: LoadTestConfig) -> Dict[str, Any]:
         async with self.lock:
             if self.running:
-                await self._stop_internal()
+                await self._stop_locked()
 
             self.config = config
             self.running = True
             self.start_time = time.time()
             self.requests_sent = 0
-            self.current_rps = float(config.rps)
+            self.recent_timestamps = []
             self.latencies = []
             self.error_count = 0
             self.progress = 0.0
@@ -77,20 +87,18 @@ class LoadTestManager:
 
     async def stop(self) -> Dict[str, Any]:
         async with self.lock:
-            await self._stop_internal()
+            if not self.running:
+                return {"ok": True, "message": "Load test not running"}
+            await self._stop_locked()
             return {"ok": True, "message": "Load test stopped"}
 
-    async def _stop_internal(self):
+    async def _stop_locked(self):
+        """Must be called while holding self.lock."""
         if self.current_task and not self.current_task.done():
             self.current_task.cancel()
-            try:
-                await self.current_task
-            except asyncio.CancelledError:
-                pass
             self.current_task = None
 
         if self.running and self.config:
-            # Save run to database
             await self._save_run_summary()
 
         self.running = False
@@ -99,7 +107,7 @@ class LoadTestManager:
 
     async def _set_demo_chaos(self, latency_ms: int, error_rate: float, cpu_spike: bool, ttl: int):
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=3.0) as client:
                 await client.post(
                     f"{settings.demo_app_url}/admin/chaos",
                     json={
@@ -107,54 +115,69 @@ class LoadTestManager:
                         "errorRate": error_rate,
                         "cpuSpike": cpu_spike,
                         "ttlSeconds": ttl
-                    },
-                    timeout=3.0
+                    }
                 )
         except Exception as e:
             print(f"Warning: Failed to set chaos on demo-app: {e}")
 
     async def _run_generator(self):
-        try:
-            config = self.config
-            if not config:
-                return
+        config = self.config
+        if not config:
+            return
 
-            client = httpx.AsyncClient(timeout=10.0)
-            target_eps = config.endpoints if config.endpoints else ["/"]
-            rps = max(1, config.rps)
-            duration = config.duration
-            end_time = self.start_time + duration
+        concurrency_limit = max(1, config.concurrency)
+        semaphore = asyncio.Semaphore(concurrency_limit)
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(10.0, connect=2.0),
+            limits=httpx.Limits(max_connections=concurrency_limit * 2, max_keepalive_connections=concurrency_limit)
+        )
 
-            # Rate limiting interval
-            interval = 1.0 / rps
+        target_eps = config.endpoints if config.endpoints else ["/"]
+        rps = max(1, config.rps)
+        duration = config.duration
+        end_time = self.start_time + duration
+        interval = 1.0 / rps
 
-            async def send_worker(ep: str):
+        async def send_worker(ep: str):
+            async with semaphore:
                 t0 = time.time()
                 try:
                     res = await client.get(f"{settings.demo_app_url}{ep}")
-                    dur_ms = (time.time() - t0) * 1000.0
+                    now = time.time()
+                    dur_ms = (now - t0) * 1000.0
                     self.latencies.append(dur_ms)
                     self.requests_sent += 1
+                    self.recent_timestamps.append(now)
                     if res.status_code >= 500:
                         self.error_count += 1
                 except Exception:
-                    dur_ms = (time.time() - t0) * 1000.0
+                    now = time.time()
+                    dur_ms = (now - t0) * 1000.0
                     self.latencies.append(dur_ms)
                     self.requests_sent += 1
+                    self.recent_timestamps.append(now)
                     self.error_count += 1
 
+        active_workers = []
+        try:
             while time.time() < end_time and self.running:
                 ep = random.choice(target_eps)
-                asyncio.create_task(send_worker(ep))
+                task = asyncio.create_task(send_worker(ep))
+                active_workers.append(task)
+                if len(active_workers) > concurrency_limit * 3:
+                    active_workers = [t for t in active_workers if not t.done()]
                 await asyncio.sleep(interval)
 
-            await client.aclose()
+            if active_workers:
+                await asyncio.gather(*[t for t in active_workers if not t.done()], return_exceptions=True)
         except asyncio.CancelledError:
             pass
         finally:
+            await client.aclose()
+            # If still marked running when loop finished naturally:
             async with self.lock:
                 if self.running:
-                    await self._stop_internal()
+                    await self._stop_locked()
 
     async def _save_run_summary(self):
         try:
@@ -164,7 +187,7 @@ class LoadTestManager:
             err_pct = (self.error_count / max(1, self.requests_sent)) * 100.0 if self.requests_sent > 0 else float(self.config.errorRate)
 
             run_id = f"LT-{int(time.time()) % 10000}"
-            async with AsyncSessionLocal() as session:
+            async with app.db.AsyncSessionLocal() as session:
                 record = LoadTestRunModel(
                     id=run_id,
                     endpoints_json=json.dumps(self.config.endpoints),

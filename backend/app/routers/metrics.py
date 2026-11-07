@@ -9,7 +9,8 @@ from sqlalchemy import select, func
 from app.db import get_db
 from app.models.alert import AlertModel
 from app.schemas.metrics import MetricPoint, KpiResponse, MetricNameInfo
-from app.services.prometheus import get_timeseries, get_kpis, get_metric_names
+from app.schemas.settings import EndpointMetricSummary
+from app.services.prometheus import get_timeseries, get_kpis, get_metric_names, get_endpoint_metrics
 
 router = APIRouter(prefix="/api", tags=["metrics"])
 
@@ -35,3 +36,7 @@ async def kpis_endpoint(
 @router.get("/metrics/names", response_model=List[MetricNameInfo])
 async def metric_names_endpoint():
     return await get_metric_names()
+
+@router.get("/metrics/endpoints", response_model=List[EndpointMetricSummary])
+async def endpoint_metrics(range: str = Query(default="15m")):
+    return await get_endpoint_metrics(range_key=range)

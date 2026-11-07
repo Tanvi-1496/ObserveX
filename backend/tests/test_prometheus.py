@@ -4,11 +4,12 @@ import pytest
 import respx
 # pyrefly: ignore[missing-import]
 from httpx import Response
-from app.services.prometheus import get_timeseries, get_kpis, get_metric_names
+from app.services.prometheus import get_timeseries, get_kpis, get_metric_names, clear_cache
 from app.config import settings
 
 @pytest.mark.asyncio
 async def test_get_timeseries_normalization():
+    clear_cache()
     with respx.mock(base_url=settings.prometheus_url) as respx_mock:
         sample_response = {
             "status": "success",
@@ -28,7 +29,7 @@ async def test_get_timeseries_normalization():
         }
         respx_mock.get("/api/v1/query_range").mock(return_value=Response(200, json=sample_response))
 
-        points = await get_timeseries("overview", "15m")
+        points = await get_timeseries("overview", "15m", skip_cache=True)
         assert len(points) > 0
         p = points[0]
         assert hasattr(p, "time")
@@ -44,6 +45,7 @@ async def test_get_timeseries_normalization():
 
 @pytest.mark.asyncio
 async def test_get_kpis():
+    clear_cache()
     with respx.mock(base_url=settings.prometheus_url) as respx_mock:
         respx_mock.get("/api/v1/query_range").mock(return_value=Response(200, json={
             "status": "success",
@@ -68,6 +70,7 @@ async def test_get_kpis():
 
 @pytest.mark.asyncio
 async def test_get_metric_names():
+    clear_cache()
     with respx.mock(base_url=settings.prometheus_url) as respx_mock:
         respx_mock.get("/api/v1/metadata").mock(return_value=Response(200, json={
             "status": "success",

@@ -17,7 +17,7 @@ services:
       jaeger:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/healthz')"]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/healthz')" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -41,7 +41,7 @@ services:
       - prometheus_rules:/etc/prometheus/rules
       - prometheus_data:/prometheus
     healthcheck:
-      test: ["CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      test: [ "CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:9090/-/healthy" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -60,7 +60,7 @@ services:
       - ./infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
     healthcheck:
-      test: ["CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:9093/-/healthy"]
+      test: [ "CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:9093/-/healthy" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -69,6 +69,7 @@ services:
   loki:
     image: grafana/loki:3.0.0
     container_name: observex-loki
+    user: "0"
     restart: unless-stopped
     ports:
       - "${LOKI_PORT:-3100}:3100"
@@ -77,7 +78,7 @@ services:
       - ./infra/loki/config.yml:/etc/loki/config.yml:ro
       - loki_data:/tmp/loki
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --tries=1 -O- http://localhost:3100/ready | grep -q 'ready' || exit 1"]
+      test: [ "CMD-SHELL", "wget -q --tries=1 -O- http://localhost:3100/ready | grep -q 'ready' || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -108,7 +109,7 @@ services:
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     healthcheck:
-      test: ["CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:16686/"]
+      test: [ "CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:16686/" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -156,6 +157,7 @@ services:
       - SQLITE_DB_PATH=/app/data/observex.db
       - PROMETHEUS_RULES_PATH=/etc/prometheus/rules/observex.yml
     volumes:
+      - ./backend:/app
       - observex_data:/app/data
       - prometheus_rules:/etc/prometheus/rules
     depends_on:
@@ -170,7 +172,7 @@ services:
       demo-app:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')" ]
       interval: 10s
       timeout: 5s
       retries: 3

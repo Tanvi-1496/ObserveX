@@ -16,6 +16,7 @@ from app.db import engine, Base, AsyncSessionLocal
 from app.models.alert_rule import AlertRuleModel
 from app.models.alert import AlertModel
 from app.models.incident import IncidentModel
+from app.models.setting import SettingModel, TeamMemberModel, ApiKeyModel
 from app.routers.alerts import sync_prometheus_rules
 from app.services.loadtest import load_test_manager
 
@@ -155,6 +156,62 @@ async def seed_initial_data():
                 )
             ]
             session.add_all(initial_alerts)
+
+        # 4. Settings
+        set_res = await session.execute(Base.metadata.tables["settings"].select())
+        if not set_res.first():
+            initial_settings = [
+                SettingModel(
+                    key="general",
+                    value=json.dumps({
+                        "workspaceName": "ObserveX Production",
+                        "defaultEnvironment": "prod",
+                        "defaultTimeRange": "15m"
+                    })
+                ),
+                SettingModel(
+                    key="notifications",
+                    value=json.dumps({
+                        "incidentUpdates": True,
+                        "alertDigests": True,
+                        "weeklySloReport": False
+                    })
+                ),
+                SettingModel(
+                    key="datasources",
+                    value=json.dumps({
+                        "Prometheus": "http://prometheus:9090",
+                        "Loki": "http://loki:3100",
+                        "Jaeger": "http://jaeger:16686"
+                    })
+                )
+            ]
+            session.add_all(initial_settings)
+
+        # 5. Team Members
+        tm_res = await session.execute(Base.metadata.tables["team_members"].select())
+        if not tm_res.first():
+            now_iso = datetime.now(timezone.utc).isoformat()
+            initial_members = [
+                TeamMemberModel(id="tm-1", name="Jordan Lee", email="jordan@observex.dev", role="Admin", status="Active", created_at=now_iso),
+                TeamMemberModel(id="tm-2", name="Maya Chen", email="maya@observex.dev", role="Editor", status="Active", created_at=now_iso),
+                TeamMemberModel(id="tm-3", name="Alex Kim", email="alex@observex.dev", role="Viewer", status="Invited", created_at=now_iso),
+            ]
+            session.add_all(initial_members)
+
+        # 6. API Keys
+        ak_res = await session.execute(Base.metadata.tables["api_keys"].select())
+        if not ak_res.first():
+            now_iso = datetime.now(timezone.utc).isoformat()
+            initial_key = ApiKeyModel(
+                id="key-1",
+                name="CI integration",
+                masked_key="obx_live_••••••92kf",
+                key_hash="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                created_at=now_iso,
+                last_used="2 min ago"
+            )
+            session.add(initial_key)
 
         await session.commit()
         await sync_prometheus_rules(session)

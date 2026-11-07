@@ -142,7 +142,7 @@ async def get_correlation(id: str, db: AsyncSession = Depends(get_db)):
     if not inc:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    correlation = await correlate_incident(inc)
+    correlation = await correlate_incident(inc, db=db)
 
     # Auto-append timeline events if missing
     try:
